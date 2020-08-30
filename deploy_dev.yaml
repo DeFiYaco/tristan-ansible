@@ -1,0 +1,151 @@
+---
+
+    - name: Deploy database on db hosts
+      hosts: dbDev
+      remote_user: nkosl
+      tasks:
+    
+        - name: Install dependencies
+          apt:
+            name: [ postgresql, python-psycopg2, git, acl ]
+            state: present
+          become: true
+
+        - name: Create user nkosl
+          postgresql_user:
+            name: nkosl
+            role_attr_flags: SUPERUSER,CREATEROLE,CREATEDB,REPLICATION,BYPASSRLS
+          become: true
+          become_user: postgres
+
+        - name: Create a new database with name "nkosl"
+          postgresql_db:
+            name: nkosl
+          become: true
+          become_user: postgres
+
+        - name: Pull application repository
+          git:
+            repo: https://github.com/KSET/nkosl-www
+            dest: /home/nkosl/nkosl-www
+            version: develop
+
+        - name: Create table
+          postgresql_query:
+            db: nkosl
+            path_to_script: /home/nkosl/nkosl-www/db/scripts/create_posts.sql
+            login_user: nkosl
+
+        - name: Fill table
+          postgresql_query:
+            db: nkosl
+            path_to_script: /home/nkosl/nkosl-www/db/scripts/fill_posts.sql
+            login_user: nkosl
+
+        - name: Find postgresql.conf
+          find:
+            paths: /etc/postgresql
+            recurse: yes
+            patterns: 'postgresql.conf'
+          register: conf
+          become: yes
+
+        - debug: msg="{{ conf.files[0].path }}"
+
+        - name: Listen from all addresses
+          lineinfile:
+            path: "{{ conf.files[0].path }}"
+            regexp: '#listen_addresses'
+            line: listen_addresses = '*'
+          become: true
+
+        - name: Find pg_hba.conf
+          find:
+            paths: /etc/postgresql
+            recurse: yes
+            patterns: 'pg_hba.conf'
+          register: conf1
+          become: yes
+
+        - debug: msg="{{ conf1.files[0].path }}"
+
+        - name: Trust application host
+          lineinfile:
+            path: "{{ conf1.files[0].path }}"
+            line: host nkosl nkosl {{ groups['appDev'][0] }}/24 trust
+          become: true
+
+        - name: Make sure a service is running
+          systemd:
+            state: restarted
+            name: postgresql.service
+          become: true
+
+    - name: Deploy application and set conf for database connection
+      hosts: appDev
+      remote_user: nkosl
+      tasks:
+    
+        - name: Ensure git, nginx, Python 3.5  and pip are installed
+          apt:
+            name: [ git, nginx, python3, python3-pip, python-pkg-resources, python3-venv ]
+            state: present
+          become: true
+
+        - name: Pull application repository
+          git:
+            repo: https://github.com/KSET/nkosl-www
+            dest: /opt/nkosl-www/
+            version: develop
+          become: true
+
+        - name: Create .env file
+          lineinfile:
+            path: /opt/nkosl-www/gunicorn.env
+            line: DB_HOST={{ groups['dbDev'][0] }}
+            create: yes
+          become: true
+
+        - name: Install requirements
+          pip: 
+            requirements: /opt/nkosl-www/app/nkosl-blog/requirements.txt
+            virtualenv: /home/nkosl/nkosl_env/
+            virtualenv_command: /usr/bin/python3 -m venv
+          become: true
+
+        - name: Add systemd service
+          copy:
+            src: /opt/nkosl-www/nkosl_blog.service
+            dest: /etc/systemd/system
+            mode: u=rwx,g=rwx,o=rwx
+            remote_src: yes
+          become: true
+
+        - name: Make sure a service is running
+          systemd:
+            state: started
+            name: nkosl_blog.service
+          become: true
+        
+        - name: copy the nginx config file and restart nginx
+          copy:
+            src: /opt/nkosl-www/nkosl_blog.conf
+            dest: /etc/nginx/sites-available/nkosl_blog.conf
+            remote_src: yes
+          become: yes
+
+        - name: create symlink
+          file:
+            src: /etc/nginx/sites-available/nkosl_blog.conf
+            dest: /etc/nginx/sites-enabled/default
+            state: link
+          become: yes
+
+        - name: Make sure a service is running
+          systemd:
+            state: restarted
+            name: nginx.service
+          become: true
+                
+    
+             

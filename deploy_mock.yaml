@@ -1,0 +1,61 @@
+---
+
+    - name: Deploy application without database
+      hosts: appMock
+      remote_user: nkosl
+      tasks:
+    
+        - name: Ensure git, nginx, Python 3.5  and pip are installed
+          apt:
+            name: [ git, nginx, python3, python3-pip, python-pkg-resources, python3-venv ]
+            state: present
+          become: true
+
+        - name: Pull application repository
+          git:
+            repo: https://github.com/KSET/nkosl-www
+            dest: /opt/nkosl-www/
+            version: mock
+          become: true
+
+        - name: Install requirements
+          pip: 
+            requirements: /opt/nkosl-www/app/nkosl-blog/requirements.txt
+            virtualenv: /home/nkosl/nkosl_env/
+            virtualenv_command: /usr/bin/python3 -m venv
+          become: true
+
+        - name: Add systemd service
+          copy:
+            src: /opt/nkosl-www/nkosl_blog.service
+            dest: /etc/systemd/system
+            mode: u=rwx,g=rwx,o=rwx
+            remote_src: yes
+          become: true
+
+        - name: Make sure a service is running
+          systemd:
+            state: started
+            name: nkosl_blog.service
+          become: true
+        
+        - name: copy the nginx config file and restart nginx
+          copy:
+            src: /opt/nkosl-www/nkosl_blog.conf
+            dest: /etc/nginx/sites-available/nkosl_blog.conf
+            remote_src: yes
+          become: yes
+
+        - name: create symlink
+          file:
+            src: /etc/nginx/sites-available/nkosl_blog.conf
+            dest: /etc/nginx/sites-enabled/default
+            state: link
+          become: yes
+
+        - name: Make sure a service is running
+          systemd:
+            state: restarted
+            name: nginx.service
+          become: true
+            

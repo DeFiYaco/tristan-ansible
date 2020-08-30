@@ -1,0 +1,81 @@
+---
+
+    - name: Deploy database on db hosts
+      hosts: db
+      remote_user: nkosl
+      tasks:
+    
+        - name: Install dependencies
+          apt:
+            name: [ postgresql, python-psycopg2, git ]
+            state: present
+          become: true
+
+        - name: Create user nkosl
+          postgresql_user:
+            name: nkosl
+            role_attr_flags: SUPERUSER,CREATEROLE,CREATEDB,REPLICATION,BYPASSRLS
+          become: true
+          become_user: postgres
+
+        - name: Create a new database with name "nkosl"
+          postgresql_db:
+            name: nkosl
+          become: true
+          become_user: postgres
+
+        - name: Pull application repository
+          git:
+            repo: https://github.com/KSET/nkosl-www
+            dest: /home/nkosl/nkosl-www
+
+        - name: Create table
+          postgresql_query:
+            db: nkosl
+            path_to_script: /home/nkosl/nkosl-www/db/scripts/create_posts.sql
+            login_user: nkosl
+
+        - name: Fill table
+          postgresql_query:
+            db: nkosl
+            path_to_script: /home/nkosl/nkosl-www/db/scripts/fill_posts.sql
+            login_user: nkosl
+
+        - name: Find postgresql.conf
+          find:
+            paths: /etc/postgresql
+            recurse: yes
+            patterns: 'postgresql.conf'
+          register: conf
+          become: yes
+
+        - debug: msg="{{ conf.files[0].path }}"
+
+        - name: Listen from all addresses
+          lineinfile:
+            path: "{{ conf.files[0].path }}"
+            regexp: '#listen_addresses'
+            line: listen_addresses = '*'
+          become: true
+
+        - name: Find pg_hba.conf
+          find:
+            paths: /etc/postgresql
+            recurse: yes
+            patterns: 'pg_hba.conf'
+          register: conf1
+          become: yes
+
+        - debug: msg="{{ conf1.files[0].path }}"
+
+        - name: Trust application host
+          lineinfile:
+            path: "{{ conf1.files[0].path }}"
+            line: host nkosl nkosl {{ groups['app'][0] }}/24 trust
+          become: true
+
+        
+
+        
+          
+             
